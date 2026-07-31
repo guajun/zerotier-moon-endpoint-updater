@@ -1,0 +1,9 @@
+[Unit]
+Description=Update ZeroTier Moon public endpoint
+Wants=network-online.target
+After=network-online.target zerotier-one.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zt-moon-endpoint-update
+

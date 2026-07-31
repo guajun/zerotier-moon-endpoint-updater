@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${CONFIG_FILE:-/etc/default/zt-moon-endpoint-updater}"
+if [[ -r "$CONFIG_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$CONFIG_FILE"
+fi
+
+MOON_JSON="${MOON_JSON:-/var/lib/zerotier-one/moon.json}"
+MOONS_DIR="${MOONS_DIR:-/var/lib/zerotier-one/moons.d}"
+ROOT_ID="${ROOT_ID:-}"
+ZEROTIER_SERVICE="${ZEROTIER_SERVICE:-zerotier-one.service}"
+ENDPOINT_PORT="${ENDPOINT_PORT:-9993}"
+BACKUP_DIR="${BACKUP_DIR:-/var/lib/zerotier-one/moon-updater-backups}"
+BACKUP_KEEP="${BACKUP_KEEP:-10}"
+LOCK_FILE="${LOCK_FILE:-/run/lock/zt-moon-endpoint-updater.lock}"
+
+log() {
+  printf 'zt-moon-endpoint-updater: %s\n' "$*"
+}
+
+die() {
+  log "ERROR: $*" >&2
+  exit 1
+}
+
+valid_ipv4() {
+  local ip="$1" octet
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r -a octets <<< "$ip"
+  for octet in "${octets[@]}"; do
+    ((10#$octet >= 0 && 10#$octet <= 255)) || return 1
+  done
+}
+
+fetch_url() {
+  curl --fail --silent --show-error --location --max-time 5 "$1" 2>/dev/null || true
+}
+
+discover_public_ipv4() {
+  local token ip url
+
+  token="$(curl --fail --silent --show-error --max-time 2 \
+    -X PUT -H 'X-aliyun-ecs-metadata-token-ttl-seconds: 60' \
+    http://100.100.100.200/latest/api/token 2>/dev/null || true)"
+  if [[ -n "$token" ]]; then
+    ip="$(curl --fail --silent --show-error --max-time 2 \
+      -H "X-aliyun-ecs-metadata-token: $token" \
+      http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null || true)"
+    ip="${ip//$'\r'/}"
+    ip="${ip//$'\n'/}"
+    if valid_ipv4 "$ip"; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${PUBLIC_IP_URL:-}" ]]; then
+    ip="$(fetch_url "$PUBLIC_IP_URL")"
+    ip="${ip//$'\r'/}"
+    ip="${ip//$'\n'/}"
+    if valid_ipv4 "$ip"; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  fi
+
+  for url in https://api.ipify.org https://checkip.amazonaws.com; do
+    ip="$(fetch_url "$url")"
+    ip="${ip//$'\r'/}"
+    ip="${ip//$'\n'/}"
+    if valid_ipv4 "$ip"; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  done
+  return 1
+}
+
+[[ $EUID -eq 0 ]] || die "must run as root"
+for command in curl jq zerotier-idtool flock install systemctl; do
+  command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"
+done
+[[ -s "$MOON_JSON" ]] || die "Moon source JSON not found: $MOON_JSON"
+jq -e '.objtype == "world" and .worldType == "moon" and (.signingKey_SECRET | type == "string" and length > 0)' \
+  "$MOON_JSON" >/dev/null || die "Moon JSON is invalid or has no signingKey_SECRET"
+
+install -d -m 0755 "$(dirname "$LOCK_FILE")"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { log "another update is already running"; exit 0; }
+
+if [[ -z "$ROOT_ID" ]]; then
+  ROOT_ID="$(jq -r '.id' "$MOON_JSON")"
+fi
+[[ "$ROOT_ID" =~ ^[0-9a-fA-F]{10}$ ]] || die "invalid ROOT_ID: $ROOT_ID"
+jq -e --arg root "${ROOT_ID,,}:" \
+  '.roots | any(.identity | startswith($root))' "$MOON_JSON" >/dev/null \
+  || die "ROOT_ID $ROOT_ID is not present in $MOON_JSON"
+
+public_ip="$(discover_public_ipv4)" || die "could not determine public IPv4 address"
+new_endpoint="$public_ip/$ENDPOINT_PORT"
+current_endpoint="$(jq -r --arg root "${ROOT_ID,,}:" \
+  '.roots[] | select(.identity | startswith($root)) | .stableEndpoints[]? | select(test("^[0-9.]+/[0-9]+$"))' \
+  "$MOON_JSON" | head -n 1)"
+
+if [[ "$current_endpoint" == "$new_endpoint" ]]; then
+  log "endpoint unchanged: $new_endpoint"
+  exit 0
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+updated_json="$tmp_dir/moon.json"
+
+jq --arg root "${ROOT_ID,,}:" --arg endpoint "$new_endpoint" '
+  .roots |= map(
+    if (.identity | startswith($root)) then
+      .stableEndpoints = ((.stableEndpoints // [])
+        | map(select(test("^[0-9.]+/[0-9]+$") | not))
+        | . + [$endpoint])
+    else . end
+  )
+' "$MOON_JSON" > "$updated_json"
+
+(
+  cd "$tmp_dir"
+  zerotier-idtool genmoon moon.json >/dev/null
+)
+generated_moon="$(find "$tmp_dir" -maxdepth 1 -type f -name '000000*.moon' -print -quit)"
+[[ -n "$generated_moon" ]] || die "zerotier-idtool did not generate a Moon file"
+
+install -d -m 0700 "$BACKUP_DIR"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+install -m 0600 "$MOON_JSON" "$BACKUP_DIR/moon.json.$timestamp"
+mapfile -t old_backups < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'moon.json.*' -printf '%T@ %p\n' \
+  | sort -rn | tail -n "+$((BACKUP_KEEP + 1))" | cut -d' ' -f2-)
+if ((${#old_backups[@]})); then
+  rm -f -- "${old_backups[@]}"
+fi
+
+json_mode="$(stat -c '%a' "$MOON_JSON")"
+json_owner="$(stat -c '%u' "$MOON_JSON")"
+json_group="$(stat -c '%g' "$MOON_JSON")"
+install -m "$json_mode" -o "$json_owner" -g "$json_group" "$updated_json" "$MOON_JSON"
+install -d -m 0755 "$MOONS_DIR"
+install -m 0644 "$generated_moon" "$MOONS_DIR/$(basename "$generated_moon")"
+
+systemctl restart "$ZEROTIER_SERVICE"
+log "updated endpoint: ${current_endpoint:-<none>} -> $new_endpoint"
+
