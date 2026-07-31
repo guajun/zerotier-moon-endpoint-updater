@@ -189,7 +189,7 @@ if [[ -n "$DEPLOY_TARGETS" ]]; then
   for target in $DEPLOY_TARGETS; do
     scp "${ssh_args[@]}" "$generated_moon" "$target:/tmp/$moon_name.new"
     ssh "${ssh_args[@]}" "$target" \
-      "install -d -m 0755 '$MOONS_DIR' && install -m 0644 '/tmp/$moon_name.new' '$MOONS_DIR/$moon_name' && rm -f '/tmp/$moon_name.new' && systemctl restart '$ZEROTIER_SERVICE'"
+      "set -e; install -d -m 0755 '$MOONS_DIR'; install -m 0644 '/tmp/$moon_name.new' '$MOONS_DIR/$moon_name'; rm -f '/tmp/$moon_name.new'; (sleep 2; systemctl restart '$ZEROTIER_SERVICE') >/dev/null 2>&1 </dev/null &"
     log "deployed $moon_name to $target"
   done
 fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${VERSION:-v1.1.0}"
+VERSION="${VERSION:-v1.1.1}"
 REPOSITORY="${REPOSITORY:-guajun/zerotier-moon-endpoint-updater}"
 BASE_URL="https://github.com/$REPOSITORY/releases/download/$VERSION"
 MOON_JSON="${MOON_JSON:-/var/lib/zerotier-one/moon.json}"
