@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${VERSION:-v1.1.1}"
+VERSION="${VERSION:-v1.1.2}"
 REPOSITORY="${REPOSITORY:-guajun/zerotier-moon-endpoint-updater}"
 BASE_URL="https://github.com/$REPOSITORY/releases/download/$VERSION"
 MOON_JSON="${MOON_JSON:-/var/lib/zerotier-one/moon.json}"
@@ -52,8 +52,11 @@ MOON_JSON="$MOON_JSON"
 # ENDPOINT_PORT="9993"
 # BACKUP_KEEP="10"
 # PEER_ROOTS="95bdf667d0=10.244.161.185"
+# PEER_SSH_TARGETS="95bdf667d0=root@10.244.161.185"
+# PEER_PUBLIC_IP_URL="https://api.ipify.org"
 # DEPLOY_TARGETS="root@10.244.161.185"
 # SSH_IDENTITY_FILE="/root/.ssh/zt-moon-deploy"
+# SSH_CONNECT_TIMEOUT="30"
 EOF
   chmod 0644 /etc/default/zt-moon-endpoint-updater
 fi
