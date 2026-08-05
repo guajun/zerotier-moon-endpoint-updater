@@ -13,6 +13,10 @@ peer root to report its own public IPv4 address over SSH, then deploys the same
 signed world to those roots. This remains self-healing when a peer root's old
 Moon endpoint is stale and the peer can only be reached through a relay.
 
+The repository also includes a manual Windows diagnostic that distinguishes
+official Planet reachability from Moon endpoint, general Internet, and local
+UDP failures.
+
 ## Requirements
 
 - Linux with systemd
@@ -88,6 +92,66 @@ sudo systemctl edit zt-moon-endpoint-updater.timer
 OnUnitActiveSec=30min
 ```
 
+## Independent Worlds
+
+Two independently powered roots can each maintain a single-root world. Keep a
+different world ID and signing key on each server, install the updater on both,
+and leave `PEER_ROOTS`, `PEER_SSH_TARGETS`, and `DEPLOY_TARGETS` empty. Clients
+orbit both world IDs once.
+
+This removes the signing-primary and cross-server SSH dependencies. Keep the
+official Planet configured: after a root changes public IP, Planet can help an
+existing client reach that root's ZeroTier identity so the client can receive
+the newly signed world definition in-band. A network without working Planet
+connectivity needs another bootstrap path.
+
+## Windows Path Diagnostic
+
+Run `diagnose-zerotier-path.ps1` from an elevated PowerShell window on a Leaf.
+Passive mode does not interrupt ZeroTier:
+
+```powershell
+Invoke-WebRequest `
+  https://github.com/guajun/zerotier-moon-endpoint-updater/releases/latest/download/diagnose-zerotier-path.ps1 `
+  -OutFile .\diagnose-zerotier-path.ps1
+Unblock-File .\diagnose-zerotier-path.ps1
+```
+
+```powershell
+.\diagnose-zerotier-path.ps1 `
+  -MoonNodeId aaaaaaaaaa,bbbbbbbbbb `
+  -Target 10.0.0.10,10.0.0.11 `
+  -PublicFallback 203.0.113.10:22,203.0.113.11:22
+```
+
+When a connection is already abnormal, use the active probe. It restarts the
+Windows `ZeroTierOneService` once, then watches the clean bootstrap for 20
+seconds:
+
+```powershell
+.\diagnose-zerotier-path.ps1 -ActiveProbe `
+  -MoonNodeId aaaaaaaaaa,bbbbbbbbbb `
+  -Target 10.0.0.10,10.0.0.11 `
+  -PublicFallback 203.0.113.10:22,203.0.113.11:22 `
+  -OutputFile .\zerotier-diagnostic.txt
+```
+
+The result is one of:
+
+- `PASS`: an official Planet exchanged traffic during the observation.
+- `SUSPECTED_PLANET_FILTER`: ZeroTier UDP reached a Moon after restart, while
+  no official Planet replied. This is the strongest evidence for a
+  Planet-specific route or filter.
+- `ZEROTIER_UDP_UNAVAILABLE`: ordinary connectivity works, but neither Planet
+  nor Moon replied. Check PassWall, firewall, NAT, and UDP/9993 first.
+- `INCONCLUSIVE`: the passive sample or available evidence cannot isolate the
+  fault.
+
+Exit code `0` means `PASS`, `2` means suspected Planet filtering, `3` means an
+inconclusive or broader connectivity problem, and `1` means the diagnostic
+itself failed. The UDP DNS control only proves that some UDP works; a fresh
+Moon path is the stronger comparison because it uses ZeroTier's own protocol.
+
 ## Safety
 
 - Updates are serialized with `flock`.
@@ -103,6 +167,12 @@ Run the endpoint discovery regression test on Linux:
 
 ```sh
 sudo tests/test-updater.sh
+```
+
+Run the diagnostic classification tests on Windows:
+
+```powershell
+.\tests\test-diagnose-zerotier-path.ps1
 ```
 
 ## License
