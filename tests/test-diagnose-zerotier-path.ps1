@@ -71,4 +71,18 @@ $preProbeSnapshot = Get-ZeroTierSnapshot -CliPath 'fixture' -FreshWindowSeconds 
     -ReceiveNotBeforeMs ($script:fixtureReceiveTime + 1)
 Assert-Equal $false $preProbeSnapshot.Peers[0].Fresh 'pre-probe receive must not count after restart'
 
+$launcherPath = Join-Path $PSScriptRoot '..\docs\run.ps1'
+$launcherErrors = $null
+$launcherTokens = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile(
+    $launcherPath,
+    [ref]$launcherTokens,
+    [ref]$launcherErrors
+)
+Assert-Equal 0 $launcherErrors.Count 'hosted launcher PowerShell syntax'
+$launcherSource = Get-Content -Raw $launcherPath
+if ($launcherSource -notmatch [regex]::Escape('/releases/latest/download/diagnose-zerotier-path.ps1')) {
+    throw 'hosted launcher must download the diagnostic from the latest release'
+}
+
 Write-Host 'all diagnostic tests passed'

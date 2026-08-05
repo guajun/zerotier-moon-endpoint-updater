@@ -110,6 +110,16 @@ connectivity needs another bootstrap path.
 Run `diagnose-zerotier-path.ps1` from an elevated PowerShell window on a Leaf.
 Passive mode does not interrupt ZeroTier:
 
+The hosted one-command launcher downloads the diagnostic from the latest
+release and runs the active probe with the maintained Moon IDs and addresses:
+
+```powershell
+irm https://guajun.github.io/zerotier-moon-endpoint-updater/run.ps1 | iex
+```
+
+Open the command page at
+<https://guajun.github.io/zerotier-moon-endpoint-updater/>.
+
 ```powershell
 Invoke-WebRequest `
   https://github.com/guajun/zerotier-moon-endpoint-updater/releases/latest/download/diagnose-zerotier-path.ps1 `
