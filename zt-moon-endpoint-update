@@ -147,6 +147,8 @@ discover_peer_endpoint_via_ssh() {
     fi; \\
     if [ -n \"\${ip:-}\" ]; then printf '%s\\n' \"\$ip\"; \\
     else curl --fail --silent --show-error --location --max-time 8 -- $quoted_url; fi"
+  # The validated URL is intentionally expanded into the remote command here.
+  # shellcheck disable=SC2029
   ip="$(ssh "${ssh_args[@]}" "$target" "$remote_command" 2>/dev/null || true)"
   ip="${ip//$'\r'/}"
   ip="${ip//$'\n'/}"
@@ -245,6 +247,8 @@ if [[ -n "$DEPLOY_TARGETS" ]]; then
   command -v scp >/dev/null 2>&1 || die "required command not found: scp"
   for target in $DEPLOY_TARGETS; do
     scp "${ssh_args[@]}" "$generated_moon" "$target:/tmp/$moon_name.new"
+    # These local paths and the service name are intentionally expanded remotely.
+    # shellcheck disable=SC2029
     ssh "${ssh_args[@]}" "$target" \
       "set -e; install -d -m 0755 '$MOONS_DIR'; install -m 0644 '/tmp/$moon_name.new' '$MOONS_DIR/$moon_name'; rm -f '/tmp/$moon_name.new'; (sleep 2; systemctl restart '$ZEROTIER_SERVICE') >/dev/null 2>&1 </dev/null &"
     log "deployed $moon_name to $target"
