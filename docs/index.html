@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4b43c">
+  <title>ZeroTier 路径诊断</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f4f6f8;
+      --surface: #ffffff;
+      --ink: #17212b;
+      --muted: #5c6874;
+      --line: #dce2e7;
+      --yellow: #f4b43c;
+      --green: #16845b;
+      --cyan: #087f98;
+      --red: #b3443f;
+      --shadow: 0 14px 36px rgba(23, 33, 43, 0.09);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .topline {
+      height: 5px;
+      background: var(--yellow);
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    .nav,
+    main,
+    footer {
+      width: min(920px, calc(100% - 40px));
+      margin-inline: auto;
+    }
+
+    .nav {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      font-weight: 700;
+    }
+
+    .brand img {
+      width: 38px;
+      height: 38px;
+      border-radius: 6px;
+    }
+
+    .repo-link {
+      color: var(--muted);
+      font-size: 14px;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 4px;
+    }
+
+    main {
+      padding: 64px 0 56px;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--cyan);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 720px;
+      margin: 0;
+      font-size: clamp(36px, 6vw, 64px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    .lede {
+      max-width: 680px;
+      margin: 20px 0 36px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.7;
+    }
+
+    .command-shell {
+      overflow: hidden;
+      border: 1px solid #263543;
+      border-radius: 6px;
+      background: #17212b;
+      box-shadow: var(--shadow);
+      color: #f8fafb;
+    }
+
+    .command-head {
+      min-height: 46px;
+      padding: 0 12px 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid #32414f;
+      color: #bdc8d1;
+      font-size: 13px;
+    }
+
+    .copy-button {
+      width: 36px;
+      height: 36px;
+      display: inline-grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 1px solid #536270;
+      border-radius: 5px;
+      background: #23313d;
+      color: #ffffff;
+      cursor: pointer;
+    }
+
+    .copy-button:hover,
+    .copy-button:focus-visible {
+      border-color: var(--yellow);
+      outline: none;
+    }
+
+    .copy-button svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 24px;
+      overflow-x: auto;
+      font: 600 15px/1.7 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .notice {
+      margin-top: 14px;
+      padding-left: 14px;
+      border-left: 3px solid var(--yellow);
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .facts {
+      margin-top: 56px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .fact {
+      min-height: 132px;
+      padding: 24px;
+    }
+
+    .fact + .fact {
+      border-left: 1px solid var(--line);
+    }
+
+    .fact strong {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 15px;
+    }
+
+    .fact p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .results {
+      margin-top: 52px;
+    }
+
+    h2 {
+      margin: 0 0 20px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .result-row {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 24px;
+      padding: 18px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .result-row:last-child {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .result-row code {
+      width: fit-content;
+      align-self: start;
+      padding: 4px 7px;
+      border-radius: 4px;
+      background: #e8edf0;
+      font: 700 12px/1.4 "Cascadia Code", Consolas, monospace;
+    }
+
+    .result-row[data-tone="ok"] code {
+      color: var(--green);
+    }
+
+    .result-row[data-tone="warn"] code {
+      color: #8c6100;
+    }
+
+    .result-row[data-tone="bad"] code {
+      color: var(--red);
+    }
+
+    .result-row p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    footer {
+      padding: 24px 0 40px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 680px) {
+      .nav,
+      main,
+      footer {
+        width: min(100% - 28px, 920px);
+      }
+
+      .nav {
+        min-height: 62px;
+      }
+
+      .brand span {
+        max-width: 170px;
+        white-space: normal;
+      }
+
+      main {
+        padding-top: 44px;
+      }
+
+      h1 {
+        font-size: 40px;
+      }
+
+      .lede {
+        font-size: 16px;
+      }
+
+      pre {
+        padding: 18px;
+        font-size: 13px;
+      }
+
+      .facts {
+        grid-template-columns: 1fr;
+      }
+
+      .fact {
+        min-height: auto;
+        padding: 20px 0;
+      }
+
+      .fact + .fact {
+        border-top: 1px solid var(--line);
+        border-left: 0;
+      }
+
+      .result-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topline"></div>
+  <header>
+    <div class="nav">
+      <div class="brand">
+        <img src="https://avatars.githubusercontent.com/u/7287045?s=96&amp;v=4" alt="ZeroTier">
+        <span>ZeroTier Path Diagnostic</span>
+      </div>
+      <a class="repo-link" href="https://github.com/guajun/zerotier-moon-endpoint-updater">GitHub repository</a>
+    </div>
+  </header>
+
+  <main>
+    <p class="eyebrow">Windows leaf diagnostic</p>
+    <h1>一行检查 Planet、Moon 与公网路径</h1>
+    <p class="lede">在管理员 PowerShell 中运行。引导器会从最新 GitHub Release 下载诊断脚本，重启一次本机 ZeroTier，并将完整报告保存到桌面。</p>
+
+    <section class="command-shell" aria-label="PowerShell command">
+      <div class="command-head">
+        <span>Administrator PowerShell</span>
+        <button class="copy-button" id="copy" type="button" title="复制命令" aria-label="复制命令">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="14" height="14" x="8" y="8" rx="2"></rect>
+            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+          </svg>
+        </button>
+      </div>
+      <pre><code id="command">irm https://guajun.github.io/zerotier-moon-endpoint-updater/run.ps1 | iex</code></pre>
+    </section>
+    <p class="notice">主动探测会让本机 ZeroTier 短暂断开一次。下载内容来自仓库最新 Release，不由网页复制脚本本体。</p>
+
+    <section class="facts" aria-label="Diagnostic scope">
+      <div class="fact">
+        <strong>Clean bootstrap</strong>
+        <p>只把服务重启之后的新收包作为证据，排除旧 Planet 路径造成的假阳性。</p>
+      </div>
+      <div class="fact">
+        <strong>Same-protocol control</strong>
+        <p>同时观察香港、深圳 Moon 的 ZeroTier UDP，用来区分 Planet 特定过滤与普通 UDP 故障。</p>
+      </div>
+      <div class="fact">
+        <strong>Local report</strong>
+        <p>结果和各段证据写入桌面时间戳文件，便于保留、截图或交给网络服务商。</p>
+      </div>
+    </section>
+
+    <section class="results">
+      <h2>结果判读</h2>
+      <div class="result-row" data-tone="ok">
+        <code>PASS</code>
+        <p>官方 Planet 在观察窗口内返回了新数据，当前网络环境可以访问 Planet。</p>
+      </div>
+      <div class="result-row" data-tone="warn">
+        <code>SUSPECTED_PLANET_FILTER</code>
+        <p>Moon 的 ZeroTier UDP 正常，但重启后没有 Planet 回包，疑似 Planet 地址或路由被针对性过滤。</p>
+      </div>
+      <div class="result-row" data-tone="bad">
+        <code>ZEROTIER_UDP_UNAVAILABLE</code>
+        <p>Planet 和 Moon 都没有新回包，应优先检查 PassWall、防火墙、NAT 与 UDP/9993。</p>
+      </div>
+      <div class="result-row">
+        <code>INCONCLUSIVE</code>
+        <p>证据不足以隔离故障，可延长观察时间并结合报告中的端点和控制探测继续判断。</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Source and releases are maintained at guajun/zerotier-moon-endpoint-updater.
+  </footer>
+
+  <script>
+    const button = document.querySelector('#copy');
+    const command = document.querySelector('#command').textContent;
+    const copyIcon = button.innerHTML;
+
+    button.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(command);
+      button.setAttribute('aria-label', '已复制');
+      button.setAttribute('title', '已复制');
+      button.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>';
+      window.setTimeout(() => {
+        button.setAttribute('aria-label', '复制命令');
+        button.setAttribute('title', '复制命令');
+        button.innerHTML = copyIcon;
+      }, 1800);
+    });
+  </script>
+</body>
+</html>
