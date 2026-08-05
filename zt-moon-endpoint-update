@@ -16,8 +16,11 @@ BACKUP_DIR="${BACKUP_DIR:-/var/lib/zerotier-one/moon-updater-backups}"
 BACKUP_KEEP="${BACKUP_KEEP:-10}"
 LOCK_FILE="${LOCK_FILE:-/run/lock/zt-moon-endpoint-updater.lock}"
 PEER_ROOTS="${PEER_ROOTS:-}"
+PEER_SSH_TARGETS="${PEER_SSH_TARGETS:-}"
+PEER_PUBLIC_IP_URL="${PEER_PUBLIC_IP_URL:-https://api.ipify.org}"
 DEPLOY_TARGETS="${DEPLOY_TARGETS:-}"
 SSH_IDENTITY_FILE="${SSH_IDENTITY_FILE:-}"
+SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-30}"
 
 log() {
   printf 'zt-moon-endpoint-updater: %s\n' "$*"
@@ -108,10 +111,62 @@ discover_peer_endpoint() {
   printf '%s\n' "$endpoint"
 }
 
+peer_ssh_target() {
+  local root_id="${1,,}" spec candidate_id target
+  for spec in $PEER_SSH_TARGETS; do
+    candidate_id="${spec%%=*}"
+    target="${spec#*=}"
+    if [[ "${candidate_id,,}" == "$root_id" ]]; then
+      printf '%s\n' "$target"
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_peer_ssh_targets() {
+  local spec candidate_id target
+  for spec in $PEER_SSH_TARGETS; do
+    candidate_id="${spec%%=*}"
+    target="${spec#*=}"
+    [[ "$spec" == *=* && "$candidate_id" =~ ^[0-9a-fA-F]{10}$ && -n "$target" ]] \
+      || die "invalid PEER_SSH_TARGETS entry: $spec"
+  done
+}
+
+discover_peer_endpoint_via_ssh() {
+  local target="$1" ip quoted_url remote_command
+  printf -v quoted_url '%q' "$PEER_PUBLIC_IP_URL"
+  remote_command="token=\$(curl --fail --silent --show-error --max-time 2 \\
+    -X PUT -H 'X-aliyun-ecs-metadata-token-ttl-seconds: 60' \\
+    http://100.100.100.200/latest/api/token 2>/dev/null || true); \\
+    if [ -n \"\$token\" ]; then \\
+      ip=\$(curl --fail --silent --show-error --max-time 2 \\
+        -H \"X-aliyun-ecs-metadata-token: \$token\" \\
+        http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null || true); \\
+    fi; \\
+    if [ -n \"\${ip:-}\" ]; then printf '%s\\n' \"\$ip\"; \\
+    else curl --fail --silent --show-error --location --max-time 8 -- $quoted_url; fi"
+  ip="$(ssh "${ssh_args[@]}" "$target" "$remote_command" 2>/dev/null || true)"
+  ip="${ip//$'\r'/}"
+  ip="${ip//$'\n'/}"
+  valid_ipv4 "$ip" || return 1
+  printf '%s/%s\n' "$ip" "$ENDPOINT_PORT"
+}
+
 [[ $EUID -eq 0 ]] || die "must run as root"
 for command in curl jq zerotier-idtool zerotier-cli flock install systemctl; do
   command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"
 done
+if [[ -n "$PEER_SSH_TARGETS" || -n "$DEPLOY_TARGETS" ]]; then
+  command -v ssh >/dev/null 2>&1 || die "required command not found: ssh"
+  [[ -r "$SSH_IDENTITY_FILE" ]] || die "SSH_IDENTITY_FILE is not readable"
+  ssh_args=(-i "$SSH_IDENTITY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout="$SSH_CONNECT_TIMEOUT")
+else
+  ssh_args=()
+fi
+validate_peer_ssh_targets
 [[ -s "$MOON_JSON" ]] || die "Moon source JSON not found: $MOON_JSON"
 jq -e '.objtype == "world" and .worldType == "moon" and (.signingKey_SECRET | type == "string" and length > 0)' \
   "$MOON_JSON" >/dev/null || die "Moon JSON is invalid or has no signingKey_SECRET"
@@ -154,8 +209,13 @@ for peer_spec in $PEER_ROOTS; do
     || die "invalid PEER_ROOTS entry: $peer_spec"
   jq -e --arg root "${peer_id,,}:" '.roots | any(.identity | startswith($root))' \
     "$working_json" >/dev/null || die "peer root $peer_id is not present in $MOON_JSON"
-  peer_endpoint="$(discover_peer_endpoint "$peer_id" "$probe_ip")" \
-    || die "could not discover a direct endpoint for peer root $peer_id"
+  if peer_target="$(peer_ssh_target "$peer_id")"; then
+    peer_endpoint="$(discover_peer_endpoint_via_ssh "$peer_target")" \
+      || die "could not discover the public endpoint reported by peer root $peer_id via $peer_target"
+  else
+    peer_endpoint="$(discover_peer_endpoint "$peer_id" "$probe_ip")" \
+      || die "could not discover a direct endpoint for peer root $peer_id"
+  fi
   current_peer_endpoint="$(jq -r --arg root "${peer_id,,}:" \
     '.roots[] | select(.identity | startswith($root)) | .stableEndpoints[]? | select(test("^[0-9.]+/[0-9]+$"))' \
     "$working_json" | head -n 1)"
@@ -183,9 +243,6 @@ moon_name="$(basename "$generated_moon")"
 
 if [[ -n "$DEPLOY_TARGETS" ]]; then
   command -v scp >/dev/null 2>&1 || die "required command not found: scp"
-  command -v ssh >/dev/null 2>&1 || die "required command not found: ssh"
-  [[ -r "$SSH_IDENTITY_FILE" ]] || die "SSH_IDENTITY_FILE is not readable"
-  ssh_args=(-i "$SSH_IDENTITY_FILE" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
   for target in $DEPLOY_TARGETS; do
     scp "${ssh_args[@]}" "$generated_moon" "$target:/tmp/$moon_name.new"
     ssh "${ssh_args[@]}" "$target" \

@@ -1,0 +1,4 @@
+*.sh text eol=lf
+zt-moon-endpoint-update text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
